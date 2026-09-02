@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "signaltutor"
+version = "0.1.0"
+description = "Multimodal, verifiable Signals and Systems tutoring agent"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.14",
+  "asyncpg>=0.30",
+  "fastapi>=0.115",
+  "greenlet>=3.1",
+  "numpy>=2.1",
+  "openai>=1.60",
+  "openai-agents>=0.7",
+  "pillow>=11.0",
+  "pgvector>=0.4",
+  "pydantic>=2.10",
+  "pydantic-settings>=2.7",
+  "python-multipart>=0.0.20",
+  "scipy>=1.14",
+  "sqlalchemy>=2.0",
+  "sympy>=1.13",
+  "uvicorn[standard]>=0.34",
+]
+
+[project.optional-dependencies]
+dev = [
+  "aiosqlite>=0.20",
+  "httpx>=0.28",
+  "mypy>=1.14",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.25",
+  "ruff>=0.9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/signaltutor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = ["live: calls real Qwen services through Alibaba Cloud Model Studio"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+packages = ["signaltutor"]
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true

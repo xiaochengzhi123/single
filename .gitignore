@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.py[cod]
+.var/
+dist/
+apps/web/node_modules/
+apps/web/.next/
+coverage.xml
+
