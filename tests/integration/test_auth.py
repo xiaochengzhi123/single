@@ -36,6 +36,9 @@ def test_admin_creates_account_and_student_can_log_in() -> None:
 
     assert created.status_code == 201
     assert created.json()["username"] == username
+    assert created.json()["expired"] is False
+    assert created.json()["remaining_days"] > 0
+    assert created.json()["expires_at"]
     assert "password" not in created.json()
     assert wrong_password.status_code == 401
     assert login.status_code == 200
@@ -108,3 +111,17 @@ def test_disabling_account_revokes_existing_login() -> None:
     assert disabled.status_code == 200
     assert disabled.json()["active"] is False
     assert revoked.status_code == 401
+
+
+def test_admin_can_renew_an_account_by_whole_months() -> None:
+    with TestClient(app) as client:
+        _, account = create_authenticated_headers(client, username_prefix="renew")
+        renewed = client.post(
+            f"/api/v1/admin/accounts/{account['id']}/renew",
+            headers=ADMIN_HEADERS,
+            json={"months": 3},
+        )
+
+    assert renewed.status_code == 200
+    assert renewed.json()["expires_at"] > account["expires_at"]
+    assert renewed.json()["expired"] is False

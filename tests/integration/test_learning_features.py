@@ -1,3 +1,6 @@
+import base64
+import json
+
 from fastapi.testclient import TestClient
 
 from apps.api.main import app
@@ -39,6 +42,23 @@ def test_fast_chat_accepts_conversation_history() -> None:
 
     assert response.status_code == 200
     assert response.json()["problem_id"]
+
+
+def test_fast_chat_stream_returns_delta_and_completed_response() -> None:
+    with TestClient(app) as client:
+        headers, _ = create_authenticated_headers(client, username_prefix="stream")
+        with client.stream(
+            "POST",
+            "/api/v1/chat/answer/stream",
+            headers=headers,
+            json={"content": "判断离散正弦序列是否具有周期性"},
+        ) as response:
+            events = [line for line in response.iter_lines() if line]
+
+    assert response.status_code == 200
+    assert '"type": "delta"' in events[0]
+    assert '"type": "done"' in events[-1]
+    assert '"problem_id"' in events[-1]
 
 
 def test_answer_feedback_is_recorded() -> None:
@@ -135,3 +155,73 @@ def test_mistake_book_is_reflected_in_learning_overview() -> None:
     assert overview.json()["topics"] == []
     assert updated.status_code == 200
     assert updated.json()["mastered"] is True
+
+
+def test_uploaded_question_image_is_available_only_to_its_owner() -> None:
+    image = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUB"
+        "AScY42YAAAAASUVORK5CYII="
+    )
+    with TestClient(app) as client:
+        owner_headers, _ = create_authenticated_headers(client, username_prefix="image-owner")
+        other_headers, _ = create_authenticated_headers(client, username_prefix="image-other")
+        answered = client.post(
+            "/api/v1/chat/answer-image/stream",
+            headers=owner_headers,
+            files={"file": ("question.png", image, "image/png")},
+            data={"content": "请解答图片题目"},
+        )
+        assert answered.status_code == 200, answered.text
+        events = [json.loads(line) for line in answered.text.splitlines() if line]
+        assert events[0]["type"] == "delta"
+        assert events[-1]["type"] == "done"
+        answer = events[-1]["response"]
+        saved = client.post(
+            "/api/v1/mistakes",
+            headers=owner_headers,
+            json={
+                "problem_id": answer["problem_id"],
+                "question": answer.get("recognized_question") or "图片题目",
+                "answer_markdown": answer["answer_markdown"],
+                "source_type": answer["source_type"],
+                "chapter": answer["chapter"],
+                "topics": answer["topics"],
+                "common_mistakes": answer["common_mistakes"],
+            },
+        )
+        assert saved.status_code == 201, saved.text
+        mistake = saved.json()
+        owner_image = client.get(
+            f"/api/v1/mistakes/{mistake['id']}/image", headers=owner_headers
+        )
+        other_image = client.get(
+            f"/api/v1/mistakes/{mistake['id']}/image", headers=other_headers
+        )
+
+    assert answer["source_type"] == "uploaded_image"
+    assert mistake["has_image"] is True
+    assert owner_image.status_code == 200
+    assert owner_image.headers["content-type"] == "image/png"
+    assert other_image.status_code == 404
+
+
+def test_ai_generated_question_can_be_saved_without_an_answer() -> None:
+    with TestClient(app) as client:
+        headers, _ = create_authenticated_headers(client, username_prefix="practice")
+        saved = client.post(
+            "/api/v1/mistakes",
+            headers=headers,
+            json={
+                "problem_id": "generated-practice",
+                "question": "已知离散序列，求其 Z 变换及收敛域。",
+                "answer_markdown": "",
+                "source_type": "ai_generated",
+                "chapter": "z_transform",
+                "topics": ["roc"],
+                "common_mistakes": [],
+            },
+        )
+
+    assert saved.status_code == 201
+    assert saved.json()["source_type"] == "ai_generated"
+    assert saved.json()["answer_markdown"] == ""

@@ -14,6 +14,10 @@ TEST_LEARNING_STORE = Path(tempfile.gettempdir()) / f"signaltutor-test-learning-
 os.environ["LEARNING_STORE_PATH"] = str(TEST_LEARNING_STORE)
 TEST_ACCOUNT_STORE = Path(tempfile.gettempdir()) / f"signaltutor-test-accounts-{os.getpid()}.json"
 os.environ["ACCOUNT_STORE_PATH"] = str(TEST_ACCOUNT_STORE)
+TEST_KNOWLEDGE_STORE = (
+    Path(tempfile.gettempdir()) / f"signaltutor-test-knowledge-{os.getpid()}.json"
+)
+os.environ["KNOWLEDGE_STORE_PATH"] = str(TEST_KNOWLEDGE_STORE)
 os.environ["AUTH_SECRET"] = "test-auth-secret-that-is-not-used-outside-pytest"
 os.environ["ADMIN_API_KEY"] = "test-admin-key"
 
@@ -46,3 +50,4 @@ def create_authenticated_headers(
 def pytest_sessionfinish() -> None:
     TEST_LEARNING_STORE.unlink(missing_ok=True)
     TEST_ACCOUNT_STORE.unlink(missing_ok=True)
+    TEST_KNOWLEDGE_STORE.unlink(missing_ok=True)

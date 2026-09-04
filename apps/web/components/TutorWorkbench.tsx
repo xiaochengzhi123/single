@@ -5,6 +5,7 @@ import {
   ArrowClockwise,
   ArrowUp,
   BookBookmark,
+  CaretLeft,
   CheckCircle,
   ChartBar,
   ClipboardText,
@@ -36,17 +37,20 @@ import {
 } from "react";
 import {
   AnswerStyle,
-  answerImage,
-  answerText,
   ChatAnswerResponse,
   FeedbackRating,
+  fetchKnowledgeSchools,
   fetchLearningOverview,
-  generatePractice,
-  generateTopicPractice,
+  fetchMistakeImage,
   LearningOverview,
+  MistakeRecord,
   saveMistake,
   setMistakeMastered,
   solveText,
+  streamAnswerImage,
+  streamAnswerText,
+  streamGeneratePractice,
+  streamGenerateTopicPractice,
   submitFeedback,
 } from "../lib/api";
 import { AuthUser } from "../lib/auth";
@@ -99,6 +103,15 @@ const chapterNames: Record<string, string> = {
   z_transform: "Z 变换",
   sampling: "采样",
   system_properties: "系统性质",
+};
+
+const knowledgeKindNames: Record<string, string> = {
+  past_exam: "历年真题",
+  textbook: "教材",
+  formula: "公式",
+  syllabus: "考试范围",
+  solution: "标准解法",
+  other: "参考资料",
 };
 
 function newId() {
@@ -165,9 +178,14 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [composerMode, setComposerMode] = useState<"solve" | "review_student_work">("solve");
   const [answerStyle, setAnswerStyle] = useState<AnswerStyle>("detailed");
+  const [knowledgeSchools, setKnowledgeSchools] = useState<string[]>([]);
+  const [targetSchool, setTargetSchool] = useState("");
   const [referenceQuestion, setReferenceQuestion] = useState<string | null>(null);
   const [learningOverview, setLearningOverview] = useState<LearningOverview | null>(null);
   const [learningPanelOpen, setLearningPanelOpen] = useState(false);
+  const [selectedMistake, setSelectedMistake] = useState<MistakeRecord | null>(null);
+  const [mistakeImageUrl, setMistakeImageUrl] = useState<string | null>(null);
+  const [mistakeImageLoading, setMistakeImageLoading] = useState(false);
   const [savedProblemIds, setSavedProblemIds] = useState<string[]>([]);
   const [savingProblemId, setSavingProblemId] = useState<string | null>(null);
   const [feedbackProblemId, setFeedbackProblemId] = useState<string | null>(null);
@@ -177,6 +195,7 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
   const endRef = useRef<HTMLDivElement>(null);
   const objectUrlsRef = useRef<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  const streamingMessageIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
@@ -240,26 +259,19 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
   }, [previewImageUrl]);
 
   useEffect(() => {
+    if (!mistakeImageUrl) return;
+    return () => URL.revokeObjectURL(mistakeImageUrl);
+  }, [mistakeImageUrl]);
+
+  useEffect(() => {
     const urls = objectUrlsRef.current;
     return () => urls.forEach((url) => URL.revokeObjectURL(url));
   }, []);
 
   useEffect(() => {
     void refreshLearningOverview();
+    void fetchKnowledgeSchools().then(setKnowledgeSchools).catch(() => setKnowledgeSchools([]));
   }, []);
-
-  function appendAssistant(response: ChatAnswerResponse, style: AnswerStyle = answerStyle) {
-    setMessages((current) => [
-      ...current,
-      {
-        id: newId(),
-        role: "assistant",
-        content: answerFrom(response),
-        analysis: response,
-        answerStyle: style,
-      },
-    ]);
-  }
 
   async function refreshLearningOverview() {
     try {
@@ -328,6 +340,8 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
     if ((!prompt && !selectedImage) || busy) return;
 
     const userText = prompt || "请解答图片中的题目";
+    const streamingMessageId = newId();
+    streamingMessageIdRef.current = streamingMessageId;
     setMessages((current) => [
       ...current,
       {
@@ -336,6 +350,12 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
         content: userText,
         imageUrl: selectedImage?.url,
         hadImage: Boolean(selectedImage),
+      },
+      {
+        id: streamingMessageId,
+        role: "assistant",
+        content: "",
+        answerStyle,
       },
     ]);
     setInput("");
@@ -348,38 +368,51 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
     abortRef.current = controller;
 
     try {
+      const onDelta = (text: string) => {
+        setStatusText("");
+        setMessages((current) => current.map((message) => (
+          message.id === streamingMessageId
+            ? { ...message, content: message.content + text }
+            : message
+        )));
+      };
+      const finish = (response: ChatAnswerResponse) => {
+        setMessages((current) => current.map((message) => (
+          message.id === streamingMessageId
+            ? {
+                ...message,
+                content: answerFrom(response),
+                analysis: response,
+                answerStyle,
+              }
+            : message
+        )));
+      };
       if (!selectedImage) {
         setStatusText("正在思考");
-        const progressTimer = window.setTimeout(
-          () => setStatusText("正在整理答案"),
-          7000,
+        finish(
+          await streamAnswerText(
+            prompt,
+            {
+              mode,
+              answerStyle,
+              history: historyForModel(messages),
+              referenceQuestion: referencedQuestion,
+              targetSchool,
+            },
+            onDelta,
+            controller.signal,
+          ),
         );
-        try {
-          appendAssistant(
-            await answerText(
-              prompt,
-              {
-                mode,
-                answerStyle,
-                history: historyForModel(messages),
-                referenceQuestion: referencedQuestion,
-              },
-              controller.signal,
-            ),
-            answerStyle,
-          );
-          if (mode === "review_student_work") {
-            await refreshLearningOverview();
-          }
-        } finally {
-          window.clearTimeout(progressTimer);
+        if (mode === "review_student_work") {
+          await refreshLearningOverview();
         }
         return;
       }
 
       setStatusText("正在识别并解答");
-      appendAssistant(
-        await answerImage(
+      finish(
+        await streamAnswerImage(
           selectedImage.file,
           prompt,
           {
@@ -387,19 +420,28 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
             answerStyle,
             history: historyForModel(messages),
             referenceQuestion: referencedQuestion,
+            targetSchool,
           },
+          onDelta,
           controller.signal,
         ),
-        answerStyle,
       );
       if (mode === "review_student_work") {
         await refreshLearningOverview();
       }
     } catch (caught) {
       if (!controller.signal.aborted) {
+        setMessages((current) => current.map((message) => (
+          message.id === streamingMessageId && !message.content
+            ? { ...message, content: "回答生成中断，请重新发送。" }
+            : message
+        )));
         setError(caught instanceof Error ? caught.message : "请求失败，请稍后重试");
       }
     } finally {
+      if (streamingMessageIdRef.current === streamingMessageId) {
+        streamingMessageIdRef.current = null;
+      }
       if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
       setStatusText("");
@@ -428,9 +470,12 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
 
   async function createSimilar(source: ChatAnswerResponse) {
     if (busy) return;
+    const streamingMessageId = newId();
+    streamingMessageIdRef.current = streamingMessageId;
     setMessages((current) => [
       ...current,
       { id: newId(), role: "user", content: "给我一道同类题" },
+      { id: streamingMessageId, role: "assistant", content: "", answerStyle },
     ]);
     setBusy(true);
     setError(null);
@@ -438,12 +483,37 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      appendAssistant(await generatePractice(source, controller.signal));
+      const response = await streamGeneratePractice(
+        source,
+        targetSchool || null,
+        (text) => {
+          setStatusText("");
+          setMessages((current) => current.map((message) => (
+            message.id === streamingMessageId
+              ? { ...message, content: message.content + text }
+              : message
+          )));
+        },
+        controller.signal,
+      );
+      setMessages((current) => current.map((message) => (
+        message.id === streamingMessageId
+          ? { ...message, content: answerFrom(response), analysis: response, answerStyle }
+          : message
+      )));
     } catch (caught) {
       if (!controller.signal.aborted) {
+        setMessages((current) => current.map((message) => (
+          message.id === streamingMessageId && !message.content
+            ? { ...message, content: "同类题生成中断，请重新尝试。" }
+            : message
+        )));
         setError(caught instanceof Error ? caught.message : "同类题生成失败");
       }
     } finally {
+      if (streamingMessageIdRef.current === streamingMessageId) {
+        streamingMessageIdRef.current = null;
+      }
       if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
       setStatusText("");
@@ -462,6 +532,21 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
       setError(caught instanceof Error ? caught.message : "保存错题失败");
     } finally {
       setSavingProblemId(null);
+    }
+  }
+
+  async function openMistake(mistake: MistakeRecord) {
+    setSelectedMistake(mistake);
+    setMistakeImageUrl(null);
+    setMistakeImageLoading(mistake.has_image);
+    if (!mistake.has_image) return;
+    try {
+      const image = await fetchMistakeImage(mistake.id);
+      setMistakeImageUrl(URL.createObjectURL(image));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "题目图片加载失败");
+    } finally {
+      setMistakeImageLoading(false);
     }
   }
 
@@ -489,10 +574,13 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
     if (busy) return;
     const [chapter, ...topicParts] = topicKey.split("/");
     const topic = topicParts.join("/") || topicKey;
+    const streamingMessageId = newId();
+    streamingMessageIdRef.current = streamingMessageId;
     setLearningPanelOpen(false);
     setMessages((current) => [
       ...current,
       { id: newId(), role: "user", content: `针对薄弱考点“${topic}”给我一道练习题` },
+      { id: streamingMessageId, role: "assistant", content: "", answerStyle },
     ]);
     setBusy(true);
     setError(null);
@@ -500,12 +588,38 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      appendAssistant(await generateTopicPractice(chapter, topic, controller.signal));
+      const response = await streamGenerateTopicPractice(
+        chapter,
+        topic,
+        targetSchool || null,
+        (text) => {
+          setStatusText("");
+          setMessages((current) => current.map((message) => (
+            message.id === streamingMessageId
+              ? { ...message, content: message.content + text }
+              : message
+          )));
+        },
+        controller.signal,
+      );
+      setMessages((current) => current.map((message) => (
+        message.id === streamingMessageId
+          ? { ...message, content: answerFrom(response), analysis: response, answerStyle }
+          : message
+      )));
     } catch (caught) {
       if (!controller.signal.aborted) {
+        setMessages((current) => current.map((message) => (
+          message.id === streamingMessageId && !message.content
+            ? { ...message, content: "练习题生成中断，请重新尝试。" }
+            : message
+        )));
         setError(caught instanceof Error ? caught.message : "练习题生成失败");
       }
     } finally {
+      if (streamingMessageIdRef.current === streamingMessageId) {
+        streamingMessageIdRef.current = null;
+      }
       if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
       setStatusText("");
@@ -514,6 +628,8 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
 
   function askMistakeAgain(question: string) {
     setLearningPanelOpen(false);
+    setSelectedMistake(null);
+    setMistakeImageUrl(null);
     setInput(question);
     setError(null);
     window.setTimeout(() => textareaRef.current?.focus(), 0);
@@ -562,12 +678,29 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
     setStatusText(answerStyle === "hint" ? "正在生成提示" : "正在重新回答");
     const controller = new AbortController();
     abortRef.current = controller;
+    streamingMessageIdRef.current = messageId;
     try {
       const messageIndex = messages.findIndex((message) => message.id === messageId);
       const priorMessages = messageIndex >= 0 ? messages.slice(0, messageIndex) : messages;
-      const response = await answerText(
+      setMessages((current) => current.map((message) => (
+        message.id === messageId ? { ...message, content: "", analysis: undefined } : message
+      )));
+      const response = await streamAnswerText(
         question,
-        { mode: "solve", answerStyle, history: historyForModel(priorMessages) },
+        {
+          mode: "solve",
+          answerStyle,
+          history: historyForModel(priorMessages),
+          targetSchool,
+        },
+        (text) => {
+          setStatusText("");
+          setMessages((current) => current.map((message) => (
+            message.id === messageId
+              ? { ...message, content: message.content + text }
+              : message
+          )));
+        },
         controller.signal,
       );
       setMessages((current) => current.map((message) => (
@@ -585,6 +718,9 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
         setError(caught instanceof Error ? caught.message : "重新回答失败");
       }
     } finally {
+      if (streamingMessageIdRef.current === messageId) {
+        streamingMessageIdRef.current = null;
+      }
       if (abortRef.current === controller) abortRef.current = null;
       setBusy(false);
       setStatusText("");
@@ -593,7 +729,10 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
 
   async function toggleMistakeMastery(mistakeId: string, mastered: boolean) {
     try {
-      await setMistakeMastered(mistakeId, mastered);
+      const updated = await setMistakeMastered(mistakeId, mastered);
+      setSelectedMistake((current) => (
+        current?.id === mistakeId ? { ...current, mastered: updated.mastered } : current
+      ));
       await refreshLearningOverview();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "更新错题状态失败");
@@ -605,10 +744,23 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
     abortRef.current = null;
     setBusy(false);
     setStatusText("");
-    setMessages((current) => [
-      ...current,
-      { id: newId(), role: "assistant", content: "已停止生成。" },
-    ]);
+    const streamingMessageId = streamingMessageIdRef.current;
+    streamingMessageIdRef.current = null;
+    setMessages((current) => {
+      if (!streamingMessageId) {
+        return [...current, { id: newId(), role: "assistant", content: "已停止生成。" }];
+      }
+      return current.map((message) => (
+        message.id === streamingMessageId
+          ? {
+              ...message,
+              content: message.content
+                ? `${message.content}\n\n> 已停止生成。`
+                : "已停止生成。",
+            }
+          : message
+      ));
+    });
   }
 
   function releaseObjectUrls() {
@@ -837,7 +989,15 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
                       <span className="stored-image-note">本题包含图片，重新打开后保留文字与回答</span>
                     )}
                     {message.role === "assistant" ? (
-                      <MarkdownMath content={message.content} />
+                      <div
+                        className={
+                          busy && streamingMessageIdRef.current === message.id
+                            ? "streaming-answer"
+                            : undefined
+                        }
+                      >
+                        <MarkdownMath content={message.content} />
+                      </div>
                     ) : (
                       <p>{message.content}</p>
                     )}
@@ -888,6 +1048,30 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
                         )}
                       </div>
                     )}
+                    {message.analysis?.sources?.length ? (
+                      <section className="answer-sources" aria-label="参考来源">
+                        <h3><BookBookmark size={16} />参考来源</h3>
+                        <div className="source-list">
+                          {message.analysis.sources.map((source, index) => (
+                            <a
+                              className="source-card"
+                              key={source.entry_id}
+                              href={source.source_url || undefined}
+                              target={source.source_url ? "_blank" : undefined}
+                              rel={source.source_url ? "noreferrer" : undefined}
+                              onClick={source.source_url ? undefined : (event) => event.preventDefault()}
+                            >
+                              <span>资料 {index + 1}</span>
+                              <strong>{source.title}</strong>
+                              <small>
+                                {[source.school, source.year ? `${source.year} 年` : null, source.source_page ? `第 ${source.source_page} 页` : null, knowledgeKindNames[source.kind]].filter(Boolean).join(" · ")}
+                              </small>
+                              <p>{source.excerpt}</p>
+                            </a>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
                     {message.strict && (
                       <div className="strict-result-label">
                         <ShieldCheck size={16} weight="fill" />
@@ -916,7 +1100,7 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
                             同类题
                           </button>
                         )}
-                        {message.analysis && message.analysis.confidence > 0 && message.analysis.response_kind !== "practice" && (
+                        {message.analysis && message.analysis.confidence > 0 && (
                           <button
                             type="button"
                             onClick={() => void addToMistakes(message.analysis!)}
@@ -1065,6 +1249,13 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
               disabled={busy}
             />
             <div className="composer-toolbar">
+              <label className="school-selector" title="按目标院校资料检索和出题">
+                <span className="visually-hidden">目标院校</span>
+                <select value={targetSchool} onChange={(event) => setTargetSchool(event.target.value)} disabled={busy}>
+                  <option value="">通用题库</option>
+                  {knowledgeSchools.map((school) => <option value={school} key={school}>{school}</option>)}
+                </select>
+              </label>
               <div className="answer-style-switch" role="group" aria-label="回答方式">
                 {answerStyles.map((style) => (
                   <button
@@ -1118,24 +1309,113 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
             className="learning-backdrop"
             type="button"
             aria-label="关闭学习记录"
-            onClick={() => setLearningPanelOpen(false)}
+            onClick={() => {
+              setLearningPanelOpen(false);
+              setSelectedMistake(null);
+              setMistakeImageUrl(null);
+            }}
           />
           <aside className="learning-panel" aria-label="学习记录">
             <div className="learning-panel-header">
               <div>
-                <strong>学习记录</strong>
-                <span>错题与薄弱考点会保存在本地</span>
+                <strong>{selectedMistake ? "错题详情" : "学习记录"}</strong>
+                <span>{selectedMistake ? "查看完整题目、原图与参考解析" : "错题与薄弱考点会按账号保存"}</span>
               </div>
               <button
                 className="icon-control"
                 type="button"
                 aria-label="关闭学习记录"
-                onClick={() => setLearningPanelOpen(false)}
+                onClick={() => {
+                  setLearningPanelOpen(false);
+                  setSelectedMistake(null);
+                  setMistakeImageUrl(null);
+                }}
               >
                 <X size={18} />
               </button>
             </div>
 
+            {selectedMistake ? (
+              <div className="mistake-detail">
+                <button
+                  className="mistake-back"
+                  type="button"
+                  onClick={() => {
+                    setSelectedMistake(null);
+                    setMistakeImageUrl(null);
+                  }}
+                >
+                  <CaretLeft size={16} />
+                  返回错题本
+                </button>
+
+                <div className="mistake-detail-meta">
+                  <span>
+                    {selectedMistake.source_type === "uploaded_image"
+                      ? "上传题目"
+                      : selectedMistake.source_type === "ai_generated"
+                        ? "AI 生成题"
+                        : "文字题目"}
+                  </span>
+                  <span>{chapterNames[selectedMistake.chapter] ?? selectedMistake.chapter}</span>
+                </div>
+
+                {mistakeImageLoading && (
+                  <div className="mistake-image-loading">正在加载题目原图…</div>
+                )}
+                {mistakeImageUrl && (
+                  <button
+                    className="mistake-detail-image"
+                    type="button"
+                    onClick={() => setPreviewImageUrl(mistakeImageUrl)}
+                    aria-label="放大查看错题原图"
+                  >
+                    <img src={mistakeImageUrl} alt="错题原图" />
+                    <span>点击放大</span>
+                  </button>
+                )}
+
+                <section className="mistake-detail-section">
+                  <h2>题目</h2>
+                  <MarkdownMath content={selectedMistake.question} />
+                </section>
+
+                <section className="mistake-detail-section">
+                  <h2>参考解析</h2>
+                  {selectedMistake.answer_markdown ? (
+                    <MarkdownMath content={selectedMistake.answer_markdown} />
+                  ) : (
+                    <p className="mistake-no-answer">这是一道待练习题，点击“开始解答”让助手带你完成。</p>
+                  )}
+                </section>
+
+                {selectedMistake.common_mistakes.length > 0 && (
+                  <section className="mistake-detail-section mistake-detail-warnings">
+                    <h2>关键易错点</h2>
+                    <ul>
+                      {selectedMistake.common_mistakes.map((item) => (
+                        <li key={item}><MarkdownMath content={item} /></li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+
+                <div className="mistake-detail-actions">
+                  <button type="button" onClick={() => askMistakeAgain(selectedMistake.question)}>
+                    <ArrowBendUpLeft size={16} />
+                    {selectedMistake.answer_markdown ? "再次提问" : "开始解答"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void toggleMistakeMastery(selectedMistake.id, !selectedMistake.mastered)}
+                  >
+                    <CheckCircle size={16} weight={selectedMistake.mastered ? "fill" : "regular"} />
+                    {selectedMistake.mastered ? "取消已掌握" : "标记掌握"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
             <section className="learning-section">
               <h2>薄弱考点</h2>
               {learningOverview?.topics.length ? (
@@ -1176,6 +1456,10 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
                         <span>{chapterNames[mistake.chapter] ?? mistake.chapter}</span>
                       </div>
                       <div className="mistake-actions">
+                        <button type="button" className="mistake-open" onClick={() => void openMistake(mistake)}>
+                          <BookBookmark size={16} weight="fill" />
+                          打开题目
+                        </button>
                         <button type="button" onClick={() => askMistakeAgain(mistake.question)}>
                           <ArrowBendUpLeft size={16} />
                           再次提问
@@ -1195,6 +1479,8 @@ export function TutorWorkbench({ user, onLogout }: { user: AuthUser; onLogout: (
                 <p className="learning-empty">还没有错题。可以从任意回答下方加入。</p>
               )}
             </section>
+              </>
+            )}
           </aside>
         </>
       )}

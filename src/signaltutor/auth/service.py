@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import calendar
 import hashlib
 import hmac
 import json
@@ -23,6 +24,16 @@ class InvalidCredentialsError(ValueError):
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _add_months(value: datetime, months: int) -> datetime:
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    source_last_day = calendar.monthrange(value.year, value.month)[1]
+    target_last_day = calendar.monthrange(year, month)[1]
+    day = target_last_day if value.day == source_last_day else min(value.day, target_last_day)
+    return value.replace(year=year, month=month, day=day)
 
 
 def _b64url(data: bytes) -> str:
@@ -82,13 +93,25 @@ class AuthService:
         self.path.chmod(0o600)
 
     @staticmethod
+    def _expiry(row: dict) -> datetime:
+        stored = row.get("expires_at")
+        if stored:
+            return datetime.fromisoformat(stored)
+        return _add_months(datetime.fromisoformat(row["created_at"]), 1)
+
+    @staticmethod
     def _public_account(row: dict) -> AdminAccountResponse:
+        expires_at = AuthService._expiry(row)
+        remaining_seconds = max(0.0, (expires_at - _now()).total_seconds())
         return AdminAccountResponse(
             id=row["id"],
             username=row["username"],
             display_name=row["display_name"],
             active=bool(row["active"]),
             created_at=datetime.fromisoformat(row["created_at"]),
+            expires_at=expires_at,
+            expired=expires_at <= _now(),
+            remaining_days=int((remaining_seconds + 86399) // 86400),
         )
 
     async def create_account(
@@ -97,12 +120,14 @@ class AuthService:
         username: str,
         display_name: str,
         password: str,
+        subscription_months: int = 1,
     ) -> AdminAccountResponse:
         normalized = username.lower()
         async with self._lock:
             data = self._read()
             if any(row["username"] == normalized for row in data["accounts"]):
                 raise AccountConflictError("该用户名已经存在")
+            created_at = _now()
             row = {
                 "id": f"usr_{uuid4()}",
                 "username": normalized,
@@ -110,7 +135,8 @@ class AuthService:
                 "password_hash": _hash_password(password),
                 "active": True,
                 "session_version": 1,
-                "created_at": _now().isoformat(),
+                "created_at": created_at.isoformat(),
+                "expires_at": _add_months(created_at, subscription_months).isoformat(),
             }
             data["accounts"].append(row)
             self._write(data)
@@ -143,6 +169,22 @@ class AuthService:
                     return self._public_account(row)
             return None
 
+    async def renew_subscription(
+        self,
+        account_id: str,
+        months: int,
+    ) -> AdminAccountResponse | None:
+        async with self._lock:
+            data = self._read()
+            for row in data["accounts"]:
+                if row["id"] == account_id:
+                    current_expiry = self._expiry(row)
+                    base = max(_now(), current_expiry)
+                    row["expires_at"] = _add_months(base, months).isoformat()
+                    self._write(data)
+                    return self._public_account(row)
+            return None
+
     async def authenticate(self, username: str, password: str) -> tuple[str, AuthUser]:
         normalized = username.lower()
         async with self._lock:
@@ -152,6 +194,8 @@ class AuthService:
             )
         if not row or not row["active"] or not _verify_password(password, row["password_hash"]):
             raise InvalidCredentialsError("账号或密码错误")
+        if self._expiry(row) <= _now():
+            raise InvalidCredentialsError("账号已到期，请联系管理员续期")
         user = AuthUser(
             id=row["id"],
             username=row["username"],
@@ -193,8 +237,11 @@ class AuthService:
         if (
             not row
             or not row["active"]
+            or self._expiry(row) <= _now()
             or int(row.get("session_version", 1)) != int(payload["ver"])
         ):
+            if row and row.get("active") and self._expiry(row) <= _now():
+                raise InvalidCredentialsError("账号已到期，请联系管理员续期")
             raise InvalidCredentialsError("登录已失效")
         return AuthUser(
             id=row["id"],

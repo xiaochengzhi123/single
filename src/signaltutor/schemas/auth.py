@@ -29,6 +29,7 @@ class AdminAccountCreateRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32, pattern=USERNAME_PATTERN)
     display_name: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=8, max_length=128)
+    subscription_months: int = Field(default=1, ge=1, le=36)
 
 
 class AdminAccountUpdateRequest(BaseModel):
@@ -39,6 +40,13 @@ class AdminPasswordResetRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+class AdminSubscriptionRenewRequest(BaseModel):
+    months: int = Field(ge=1, le=36)
+
+
 class AdminAccountResponse(AuthUser):
     active: bool
     created_at: datetime
+    expires_at: datetime
+    expired: bool
+    remaining_days: int

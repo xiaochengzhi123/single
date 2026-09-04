@@ -6,7 +6,7 @@ SignalTutor 是面向考研《信号与系统》的多模态、可验证 AI 辅�
 parse → classify → retrieve → plan → solve → verify → render → persist
 ```
 
-V0.1 已提供文字题、截图上传、上下文追问、管理员发放账号、账号级学习记录隔离、详细/简洁/提示三种回答方式、解法批改、回答评价、同类题、薄弱考点针对练习、严格校验、错题本再次提问、本地多会话历史、符号工具、ROC 与终值规则、知识检索、掌握度记录、FastAPI API 和 Next.js 学习工作台。
+V0.1 已提供文字题、截图上传、上下文追问、管理员发放账号、账号级学习记录隔离、详细/简洁/提示三种回答方式、解法批改、回答评价、同类题、薄弱考点针对练习、严格校验、错题本再次提问、本地多会话历史、真题知识库、院校筛选、答案来源引用、符号工具、ROC 与终值规则、知识检索、掌握度记录、FastAPI API 和 Next.js 学习工作台。
 
 ## Architecture
 
@@ -93,7 +93,7 @@ pnpm dev
 
 Open [http://localhost:3000](http://localhost:3000). API docs are at [http://localhost:8000/docs](http://localhost:8000/docs).
 
-学生端只允许登录，不开放自行注册。打开 [http://localhost:3000/admin](http://localhost:3000/admin)，输入 `.env` 中的 `ADMIN_API_KEY`，即可创建学生账号、重置密码或停用账号。创建成功后页面只显示一次初始密码，请立即复制并发给学生。
+学生端只允许登录，不开放自行注册。打开 [http://localhost:3000/admin](http://localhost:3000/admin)，输入 `.env` 中的 `ADMIN_API_KEY`，即可管理学生账号和真题知识库。知识库支持手工录入，以及导入文字版 PDF、Markdown、TXT、JSON 和 JSONL。创建账号成功后页面只显示一次初始密码，请立即复制并发给学生。
 
 ## Docker start
 
@@ -148,6 +148,7 @@ images and full problem text are not written to ordinary logs.
 | `UPLOAD_DIR` | Local development image directory |
 | `LEARNING_STORE_PATH` | Local persistent mistake-book and mastery store |
 | `ACCOUNT_STORE_PATH` | Local account and password-hash store |
+| `KNOWLEDGE_STORE_PATH` | Local persistent past-exam and knowledge store |
 | `AUTH_SECRET` | Server-only login-token signing secret; use a long random value in production |
 | `ADMIN_API_KEY` | Server-only key used to enter the account management page |
 | `ACCESS_TOKEN_TTL_SECONDS` | Login validity in seconds; default is seven days |
@@ -169,6 +170,10 @@ images and full problem text are not written to ordinary logs.
 | `POST` | `/api/v1/auth/login` | Student login with an issued account |
 | `GET` | `/api/v1/auth/me` | Current authenticated student |
 | `GET/POST` | `/api/v1/admin/accounts` | List or create accounts with `X-Admin-Key` |
+| `GET/POST` | `/api/v1/admin/knowledge` | List or create knowledge entries with `X-Admin-Key` |
+| `POST` | `/api/v1/admin/knowledge/import` | Import PDF, Markdown, TXT, JSON or JSONL knowledge files |
+| `GET` | `/api/v1/knowledge/schools` | List schools present in the published knowledge base |
+| `GET` | `/api/v1/knowledge/search` | Search published knowledge with optional school filter |
 | `POST` | `/api/v1/problems/parse-text` | Parse and save text |
 | `POST` | `/api/v1/problems/upload` | Validate, store and vision-parse an image |
 | `POST` | `/api/v1/problems/{id}/solve` | Run the verified workflow |

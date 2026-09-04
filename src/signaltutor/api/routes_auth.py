@@ -8,6 +8,7 @@ from signaltutor.schemas.auth import (
     AdminAccountResponse,
     AdminAccountUpdateRequest,
     AdminPasswordResetRequest,
+    AdminSubscriptionRenewRequest,
     AuthUser,
     LoginRequest,
     LoginResponse,
@@ -78,6 +79,19 @@ async def reset_password(
     service: Services = Depends(get_services),
 ) -> AdminAccountResponse:
     account = await service.auth.reset_password(account_id, request.password)
+    if not account:
+        raise HTTPException(status_code=404, detail={"message": "账号不存在"})
+    return account
+
+
+@router.post("/admin/accounts/{account_id}/renew", response_model=AdminAccountResponse)
+async def renew_subscription(
+    account_id: str,
+    request: AdminSubscriptionRenewRequest,
+    _admin: AdminAccess,
+    service: Services = Depends(get_services),
+) -> AdminAccountResponse:
+    account = await service.auth.renew_subscription(account_id, request.months)
     if not account:
         raise HTTPException(status_code=404, detail={"message": "账号不存在"})
     return account

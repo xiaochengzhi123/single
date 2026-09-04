@@ -9,6 +9,7 @@ from signaltutor.api.dependencies import get_services
 from signaltutor.api.routes_auth import router as auth_router
 from signaltutor.api.routes_chat import router as chat_router
 from signaltutor.api.routes_feedback import router as feedback_router
+from signaltutor.api.routes_knowledge import router as knowledge_router
 from signaltutor.api.routes_learning import router as learning_router
 from signaltutor.api.routes_problems import router as problems_router
 from signaltutor.api.routes_students import router as students_router
@@ -53,6 +54,7 @@ app.include_router(chat_router)
 app.include_router(students_router)
 app.include_router(feedback_router)
 app.include_router(learning_router)
+app.include_router(knowledge_router)
 
 
 @app.exception_handler(SignalTutorError)

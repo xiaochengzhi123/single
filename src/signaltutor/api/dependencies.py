@@ -13,6 +13,7 @@ from signaltutor.agents.vision_parser import VisionProblemParser
 from signaltutor.auth import AuthService
 from signaltutor.config.settings import Settings, get_settings
 from signaltutor.db.repositories.problems import InMemoryProblemRepository
+from signaltutor.rag.knowledge_store import PersistentKnowledgeRepository
 from signaltutor.rag.repository import InMemoryKnowledgeRepository
 from signaltutor.rag.retriever import KnowledgeRetriever
 from signaltutor.schemas.problem import ProblemParse
@@ -36,6 +37,7 @@ class Services:
     tutor: TutorRenderer
     direct_tutor: DirectTutor
     auth: AuthService
+    knowledge: PersistentKnowledgeRepository
 
     def workflow(self, problem_id: str, problem: ProblemParse) -> WorkflowContext:
         return WorkflowContext(
@@ -73,6 +75,7 @@ def build_services(settings: Settings | None = None) -> Services:
             config.auth_secret,
             config.access_token_ttl_seconds,
         ),
+        knowledge=PersistentKnowledgeRepository(config.knowledge_store_path),
     )
 
 

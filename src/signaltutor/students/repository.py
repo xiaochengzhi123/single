@@ -95,6 +95,8 @@ class PersistentStudentRepository:
         chapter: str,
         topics: list[str],
         common_mistakes: list[str],
+        source_type: str = "text",
+        image_key: str | None = None,
     ) -> dict:
         async with self._lock:
             data = self._read()
@@ -103,11 +105,29 @@ class PersistentStudentRepository:
                     row
                     for row in data["mistakes"]
                     if row["student_id"] == student_id
-                    and row["question"].strip() == question.strip()
+                    and (
+                        (problem_id and row.get("problem_id") == problem_id)
+                        or row["question"].strip() == question.strip()
+                    )
                 ),
                 None,
             )
             if existing:
+                # Enrich records created by older versions instead of leaving a
+                # permanently truncated question or a missing uploaded image.
+                existing.update(
+                    {
+                        "problem_id": problem_id or existing.get("problem_id"),
+                        "question": question,
+                        "answer_markdown": answer_markdown or existing.get("answer_markdown", ""),
+                        "chapter": chapter,
+                        "topics": topics,
+                        "common_mistakes": common_mistakes,
+                        "source_type": source_type,
+                        "image_key": image_key or existing.get("image_key"),
+                    }
+                )
+                self._write(data)
                 return existing
             row = {
                 "id": str(uuid4()),
@@ -115,6 +135,8 @@ class PersistentStudentRepository:
                 "problem_id": problem_id,
                 "question": question,
                 "answer_markdown": answer_markdown,
+                "source_type": source_type,
+                "image_key": image_key,
                 "chapter": chapter,
                 "topics": topics,
                 "common_mistakes": common_mistakes,
@@ -130,7 +152,25 @@ class PersistentStudentRepository:
             rows = [
                 row for row in self._read()["mistakes"] if row["student_id"] == student_id
             ]
-            return sorted(rows, key=lambda row: row["created_at"], reverse=True)
+            normalized = []
+            for row in rows:
+                item = dict(row)
+                item.setdefault("source_type", "text")
+                item["has_image"] = bool(item.get("image_key"))
+                item.pop("image_key", None)
+                normalized.append(item)
+            return sorted(normalized, key=lambda row: row["created_at"], reverse=True)
+
+    async def get_mistake(self, student_id: str, mistake_id: str) -> dict | None:
+        async with self._lock:
+            return next(
+                (
+                    dict(row)
+                    for row in self._read()["mistakes"]
+                    if row["id"] == mistake_id and row["student_id"] == student_id
+                ),
+                None,
+            )
 
     async def set_mistake_mastered(
         self,

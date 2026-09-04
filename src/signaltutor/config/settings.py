@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     upload_dir: Path = Path(".var/uploads")
     learning_store_path: Path = Path(".var/learning.json")
     account_store_path: Path = Path(".var/accounts.json")
+    knowledge_store_path: Path = Path(".var/knowledge.json")
     auth_secret: str = "development-only-auth-secret-change-before-deploy"
     admin_api_key: str = "development-admin-key"
     access_token_ttl_seconds: int = 7 * 24 * 60 * 60

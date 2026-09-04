@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 
 from signaltutor.schemas.classification import ProblemClassification
+from signaltutor.schemas.knowledge import KnowledgeCitation
 from signaltutor.schemas.problem import ProblemParse
 from signaltutor.schemas.solution import SolutionDraft, SolutionPlan
 from signaltutor.schemas.student import AnswerMode
@@ -42,6 +43,7 @@ class DirectChatAnswerRequest(BaseModel):
     answer_style: Literal["detailed", "concise", "hint"] = "detailed"
     history: list[DirectChatHistoryMessage] = Field(default_factory=list, max_length=12)
     reference_question: str | None = Field(default=None, max_length=20000)
+    target_school: str | None = Field(default=None, max_length=120)
 
 
 class DirectChatAnswerResponse(BaseModel):
@@ -49,6 +51,7 @@ class DirectChatAnswerResponse(BaseModel):
     answer_markdown: str
     recognized_question: str | None = None
     response_kind: Literal["solve", "review_student_work", "practice"] = "solve"
+    source_type: Literal["text", "uploaded_image", "ai_generated"] = "text"
     chapter: str = "signals"
     topics: list[str] = Field(default_factory=list)
     exam_points: list[str] = Field(default_factory=list)
@@ -60,18 +63,21 @@ class DirectChatAnswerResponse(BaseModel):
     confidence: float = Field(ge=0, le=1)
     needs_clarification: bool = False
     clarification: str | None = None
+    sources: list[KnowledgeCitation] = Field(default_factory=list)
 
 
 class PracticeGenerateRequest(BaseModel):
     source_question: str = Field(min_length=1, max_length=20000)
     chapter: str = "signals"
     topics: list[str] = Field(default_factory=list)
+    target_school: str | None = Field(default=None, max_length=120)
 
 
 class MistakeCreateRequest(BaseModel):
     problem_id: str | None = None
     question: str = Field(min_length=1, max_length=20000)
-    answer_markdown: str = Field(min_length=1, max_length=50000)
+    answer_markdown: str = Field(default="", max_length=50000)
+    source_type: Literal["text", "uploaded_image", "ai_generated"] = "text"
     chapter: str = "signals"
     topics: list[str] = Field(default_factory=list)
     common_mistakes: list[str] = Field(default_factory=list)
